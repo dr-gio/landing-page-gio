@@ -28,9 +28,11 @@ const DEFAULT_FOOTER = {
 
 const ICON_MAP = {
   Globe: <Globe size={20} />,
-  Instagram: <Instagram size={20} />,
+  Instagram: <Instagram size={20} color="#E4405F" />,
+  WhatsApp: <MessageCircle size={20} color="#25D366" />,
+  TikTok: <PlayCircle size={20} color="#FFFFFF" />, // TikTok icon isn't in Lucide, using PlayCircle as a clean alternative
   MessageCircle: <MessageCircle size={20} />,
-  PlayCircle: <PlayCircle size={20} />,
+  PlayCircle: <PlayCircle size={18} />,
   History: <History size={20} />
 };
 
@@ -520,7 +522,9 @@ function App() {
                   <select name="icon" defaultValue={editingLink?.icon || "Globe"}>
                     <option value="Globe">Web / Globo</option>
                     <option value="Instagram">Instagram</option>
-                    <option value="MessageCircle">Mensaje / WhatsApp</option>
+                    <option value="WhatsApp">WhatsApp</option>
+                    <option value="TikTok">TikTok</option>
+                    <option value="MessageCircle">Mensaje</option>
                     <option value="PlayCircle">Video / YouTube</option>
                     <option value="History">Historia</option>
                   </select>
