@@ -6,14 +6,6 @@ CREATE TABLE IF NOT EXISTS site_content (
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Tabla para almacenar usuarios administradores
-CREATE TABLE IF NOT EXISTS admin_users (
-  id BIGSERIAL PRIMARY KEY,
-  username TEXT UNIQUE NOT NULL,
-  password_hash TEXT NOT NULL,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-
 -- Insertar datos iniciales (valores por defecto)
 INSERT INTO site_content (key, value) VALUES
 ('links', '[
@@ -29,16 +21,19 @@ ON CONFLICT (key) DO NOTHING;
 
 -- Habilitar Row Level Security (RLS)
 ALTER TABLE site_content ENABLE ROW LEVEL SECURITY;
-ALTER TABLE admin_users ENABLE ROW LEVEL SECURITY;
 
--- Políticas de seguridad: Todos pueden leer, solo autenticados pueden escribir
+-- Eliminar políticas anteriores para evitar conflictos si se vuelve a correr el script
+DROP POLICY IF EXISTS "Allow public read access" ON site_content;
+DROP POLICY IF EXISTS "Allow public write access" ON site_content;
+DROP POLICY IF EXISTS "Allow authenticated update" ON site_content;
+DROP POLICY IF EXISTS "Allow authenticated insert" ON site_content;
+
+-- Políticas de seguridad CORRECTAS:
+-- 1. Cualquiera puede LEER (SELECT)
 CREATE POLICY "Allow public read access" ON site_content FOR SELECT USING (true);
-CREATE POLICY "Allow public write access" ON site_content FOR ALL USING (true);
 
--- Permitir lectura pública para verificar si existe un admin
-CREATE POLICY "Allow public read access" ON admin_users FOR SELECT USING (true);
--- Permitir que CUALQUIERA inserte (necesario para el primer setup)
-CREATE POLICY "Allow public insert access" ON admin_users FOR INSERT WITH CHECK (true);
--- Permitir que CUALQUIERA actualice (necesario para el flujo de seguridad simplificado)
-CREATE POLICY "Allow public update access" ON admin_users FOR UPDATE USING (true);
+-- 2. Solo usuarios AUTENTICADOS (Logueados en Supabase) pueden INSERTAR, ACTUALIZAR o BORRAR
+CREATE POLICY "Allow authenticated insert" ON site_content FOR INSERT WITH CHECK (auth.role() = 'authenticated');
+CREATE POLICY "Allow authenticated update" ON site_content FOR UPDATE USING (auth.role() = 'authenticated');
+CREATE POLICY "Allow authenticated delete" ON site_content FOR DELETE USING (auth.role() = 'authenticated');
 

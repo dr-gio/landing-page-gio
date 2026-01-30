@@ -59,6 +59,24 @@ const VideoPlayer = ({ url, title }) => {
   );
 };
 
+const Link = ({ link, isAdmin, setEditingLink, deleteLink }) => {
+  return (
+    <div key={link.id} className="link-wrapper">
+      <a href={isAdmin ? undefined : link.url} target="_blank" rel="noopener noreferrer" className={`link-card glass ${link.type}`}>
+        <div className="link-icon">{ICON_MAP[link.icon]}</div>
+        <span className="link-title">{link.title}</span>
+        {!isAdmin && <ExternalLink size={16} className="ext-icon" />}
+      </a>
+      {isAdmin && (
+        <div className="admin-actions">
+          <button onClick={() => setEditingLink(link)} className="edit-btn"><Edit2 size={16} /></button>
+          <button onClick={() => deleteLink(link.id)} className="delete-btn"><Trash2 size={16} /></button>
+        </div>
+      )}
+    </div>
+  );
+};
+
 function App() {
   const [links, setLinks] = useState(DEFAULT_LINKS);
   const [videos, setVideos] = useState(DEFAULT_VIDEOS);
@@ -67,12 +85,12 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [errorConnection, setErrorConnection] = useState(false);
 
-  // Security States
-  const [adminAuth, setAdminAuth] = useState(null);
-  const [isAdmin, setIsAdmin] = useState(() => sessionStorage.getItem('440_auth') === 'true');
+  // Auth States
+  const [session, setSession] = useState(null);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
-  const [showSetup, setShowSetup] = useState(false);
-  const [loginError, setLoginError] = useState(false);
+  const [showSetup, setShowSetup] = useState(false); // Used for Sign Up now
+  const [authError, setAuthError] = useState(null);
 
   // Content Editing States
   const [editingLink, setEditingLink] = useState(null);
@@ -80,13 +98,27 @@ function App() {
   const [editingVideo, setEditingVideo] = useState(null);
   const [editingProfile, setEditingProfile] = useState(false);
   const [editingFooter, setEditingFooter] = useState(false);
-  const [editingSecurity, setEditingSecurity] = useState(false);
   const [tempProfileImage, setTempProfileImage] = useState(null);
 
-  // Load data from Supabase on mount
   useEffect(() => {
+    // 1. Check active session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      setIsAdmin(!!session);
+    });
+
+    // 2. Listen for auth changes
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+      setIsAdmin(!!session);
+    });
+
+    // 3. Load content
     loadContent();
-    checkAdminUser();
+
+    return () => subscription.unsubscribe();
   }, []);
 
   const loadContent = async () => {
@@ -118,125 +150,83 @@ function App() {
               break;
           }
         });
-      } else {
-        console.warn('No content found in Supabase site_content table, using defaults.');
       }
     } catch (error) {
-      console.error('Error loading content from Supabase:', error);
+      console.error('Error loading content:', error);
       setErrorConnection(true);
     } finally {
       setLoading(false);
     }
   };
 
-  const checkAdminUser = async () => {
-    try {
-      // Usamos limit(1) en lugar de .single() para evitar el error 406
-      // si la tabla está vacía.
-      const { data, error } = await supabase
-        .from('admin_users')
-        .select('*')
-        .limit(1);
-
-      if (error) {
-        console.error('Error checking admin user:', error);
-        return;
-      }
-
-      if (data && data.length > 0) {
-        setAdminAuth({ username: data[0].username, password: data[0].password_hash });
-      } else {
-        console.info('No admin user found. Setup mode enabled.');
-        setAdminAuth(null);
-      }
-    } catch (error) {
-      console.error('Unexpected error checking admin user:', error);
-      setAdminAuth(null);
-    }
-  };
-
   const saveToSupabase = async (key, value) => {
+    if (!isAdmin) {
+      alert("No tienes permisos para guardar cambios.");
+      return;
+    }
+
     try {
       const { error } = await supabase
         .from('site_content')
         .upsert({ key, value }, { onConflict: 'key' });
 
       if (error) throw error;
+      console.log(`✓ ${key} guardado exitosamente`);
     } catch (error) {
       console.error(`Error saving ${key}:`, error);
-      alert('Error de conexión con la base de datos. Los cambios se aplicaron localmente pero podrían no persistir.');
+      alert(`Error al guardar: ${error.message}`);
     }
   };
 
   const handleAdminToggle = () => {
     if (isAdmin) {
-      setIsAdmin(false);
-      sessionStorage.removeItem('440_auth');
-    } else {
-      if (!adminAuth) {
-        setShowSetup(true);
-      } else {
-        setShowLogin(true);
+      if (window.confirm("¿Cerrar sesión de administrador?")) {
+        supabase.auth.signOut();
+        setIsAdmin(false);
       }
-    }
-  };
-
-  const handleSetup = async (e) => {
-    e.preventDefault();
-    const formData = new FormData(e.target);
-    const username = formData.get('username');
-    const password = formData.get('password');
-
-    try {
-      const { error } = await supabase
-        .from('admin_users')
-        .insert([{ username, password_hash: password }]);
-
-      if (error) throw error;
-
-      setAdminAuth({ username, password });
-      setIsAdmin(true);
-      setShowSetup(false);
-      sessionStorage.setItem('440_auth', 'true');
-    } catch (error) {
-      console.error('Error creating admin:', error);
-      alert('Error al crear el administrador');
-    }
-  };
-
-  const handleLogin = (e) => {
-    e.preventDefault();
-    const formData = new FormData(e.target);
-    if (formData.get('username') === adminAuth.username && formData.get('password') === adminAuth.password) {
-      setIsAdmin(true);
-      setShowLogin(false);
-      setLoginError(false);
-      sessionStorage.setItem('440_auth', 'true');
     } else {
-      setLoginError(true);
+      setShowLogin(true);
     }
   };
 
-  const updateSecurity = async (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault();
+    setAuthError(null);
     const formData = new FormData(e.target);
-    const username = formData.get('username');
+    const email = formData.get('email');
     const password = formData.get('password');
 
-    try {
-      const { error } = await supabase
-        .from('admin_users')
-        .update({ username, password_hash: password })
-        .eq('username', adminAuth.username);
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
 
-      if (error) throw error;
+    if (error) {
+      setAuthError(error.message);
+    } else {
+      setShowLogin(false);
+    }
+  };
 
-      setAdminAuth({ username, password });
-      setEditingSecurity(false);
-      alert('Credenciales actualizadas correctamente');
-    } catch (error) {
-      console.error('Error updating credentials:', error);
-      alert('Error al actualizar las credenciales');
+  const handleSignUp = async (e) => {
+    e.preventDefault();
+    setAuthError(null);
+    const formData = new FormData(e.target);
+    const email = formData.get('email');
+    const password = formData.get('password');
+
+    const { error } = await supabase.auth.signUp({
+      email,
+      password,
+    });
+
+    if (error) {
+      setAuthError(error.message);
+    } else {
+      alert("Usuario creado exitosamente. ¡Bienvenido!");
+      setShowSetup(false);
+      // Auto login often happens, but if confirm email is on, it might not.
+      // For this simple app, we assume immediate login or user can login.
     }
   };
 
@@ -340,12 +330,6 @@ function App() {
         {isAdmin ? <X size={20} /> : <Settings size={20} />}
       </button>
 
-      {isAdmin && (
-        <button className="security-settings-btn glass" onClick={() => setEditingSecurity(true)}>
-          <ShieldCheck size={20} />
-        </button>
-      )}
-
       <header className={`profile-header ${isAdmin ? 'admin-highlight' : ''}`}>
         <img src="/logo-clinic-full.png" alt="440 Clinic Logo" className="brand-logo" />
         <div className="profile-img-container">
@@ -380,19 +364,7 @@ function App() {
 
         <section className="links-section">
           {links.map(link => (
-            <div key={link.id} className="link-wrapper">
-              <a href={isAdmin ? undefined : link.url} target="_blank" rel="noopener noreferrer" className={`link-card glass ${link.type}`}>
-                <div className="link-icon">{ICON_MAP[link.icon]}</div>
-                <span className="link-title">{link.title}</span>
-                {!isAdmin && <ExternalLink size={16} className="ext-icon" />}
-              </a>
-              {isAdmin && (
-                <div className="admin-actions">
-                  <button onClick={() => setEditingLink(link)} className="edit-btn"><Edit2 size={16} /></button>
-                  <button onClick={() => deleteLink(link.id)} className="delete-btn"><Trash2 size={16} /></button>
-                </div>
-              )}
-            </div>
+            <Link key={link.id} link={link} isAdmin={isAdmin} setEditingLink={setEditingLink} deleteLink={deleteLink} />
           ))}
 
           {isAdmin && !isAdding && (
@@ -411,37 +383,38 @@ function App() {
           <VideoPlayer url={videos.history.url} title={videos.history.title} />
         </section>
 
-        {/* Setup Modal (First Time) */}
+        {/* Setup Modal (Now Sign Up) */}
         {showSetup && (
           <div className="admin-modal-overlay">
             <div className="admin-modal glass active">
               <div className="modal-header">
-                <h2>Configurar Administrador</h2>
-                <button onClick={() => setShowSetup(false)}><X size={24} /></button>
+                <h2>Crear Cuenta</h2>
+                <button onClick={() => { setShowSetup(false); setShowLogin(true); }}><X size={24} /></button>
               </div>
-              <p className="modal-subtitle">Crea un usuario y contraseña para gestionar tu página.</p>
-              <form onSubmit={handleSetup} className="admin-form">
+              <p className="modal-subtitle">Regístrate para gestionar tu página.</p>
+              <form onSubmit={handleSignUp} className="admin-form">
                 <div className="form-group">
-                  <label>Nombre de Usuario</label>
+                  <label>Email</label>
                   <div className="password-input-wrapper">
                     <User size={16} className="field-icon" />
-                    <input name="username" required placeholder="Ej: drgio_admin" autoFocus />
+                    <input name="email" type="email" required placeholder="tu@email.com" autoFocus />
                   </div>
                 </div>
                 <div className="form-group">
                   <label>Contraseña</label>
                   <div className="password-input-wrapper">
                     <Lock size={16} className="field-icon" />
-                    <input type="password" name="password" required placeholder="Crea una contraseña segura" />
+                    <input type="password" name="password" required placeholder="Contraseña segura" />
                   </div>
+                  {authError && <p className="error-message">{authError}</p>}
                 </div>
-                <button type="submit" className="submit-btn"><Check size={20} /> Crear Administrador</button>
+                <button type="submit" className="submit-btn"><Check size={20} /> Registrarse</button>
               </form>
             </div>
           </div>
         )}
 
-        {/* Auth Modal */}
+        {/* Login Modal */}
         {showLogin && (
           <div className="admin-modal-overlay">
             <div className="admin-modal glass active">
@@ -451,10 +424,10 @@ function App() {
               </div>
               <form onSubmit={handleLogin} className="admin-form">
                 <div className="form-group">
-                  <label>Usuario</label>
+                  <label>Email</label>
                   <div className="password-input-wrapper">
                     <User size={16} className="field-icon" />
-                    <input name="username" required autoFocus placeholder="Tu usuario" />
+                    <input name="email" type="email" required autoFocus placeholder="tu@email.com" />
                   </div>
                 </div>
                 <div className="form-group">
@@ -463,38 +436,17 @@ function App() {
                     <Lock size={16} className="field-icon" />
                     <input type="password" name="password" required placeholder="Tu contraseña" />
                   </div>
-                  {loginError && <p className="error-message">Credenciales incorrectas</p>}
+                  {authError && <p className="error-message">{authError}</p>}
                 </div>
                 <button type="submit" className="submit-btn"><Check size={20} /> Ingresar</button>
-              </form>
-            </div>
-          </div>
-        )}
-
-        {/* Security Settings Modal */}
-        {editingSecurity && (
-          <div className="admin-modal-overlay">
-            <div className="admin-modal glass active">
-              <div className="modal-header">
-                <h2>Configuración de Seguridad</h2>
-                <button onClick={() => setEditingSecurity(false)}><X size={24} /></button>
-              </div>
-              <form onSubmit={updateSecurity} className="admin-form">
-                <div className="form-group">
-                  <label>Nuevo Usuario</label>
-                  <div className="password-input-wrapper">
-                    <User size={16} className="field-icon" />
-                    <input name="username" defaultValue={adminAuth?.username} required />
-                  </div>
+                <div style={{ textAlign: 'center', marginTop: '10px' }}>
+                  <button
+                    type="button"
+                    onClick={() => { setShowLogin(false); setShowSetup(true); }}
+                    style={{ background: 'none', border: 'none', color: 'var(--accent-bronze)', textDecoration: 'underline', cursor: 'pointer', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
+                    ¿No tienes cuenta? Regístrate
+                  </button>
                 </div>
-                <div className="form-group">
-                  <label>Nueva Contraseña</label>
-                  <div className="password-input-wrapper">
-                    <Lock size={16} className="field-icon" />
-                    <input type="password" name="password" defaultValue={adminAuth?.password} required />
-                  </div>
-                </div>
-                <button type="submit" className="submit-btn"><Check size={20} /> Guardar Cambios</button>
               </form>
             </div>
           </div>
