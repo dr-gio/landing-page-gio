@@ -33,7 +33,12 @@ ALTER TABLE admin_users ENABLE ROW LEVEL SECURITY;
 
 -- Políticas de seguridad: Todos pueden leer, solo autenticados pueden escribir
 CREATE POLICY "Allow public read access" ON site_content FOR SELECT USING (true);
-CREATE POLICY "Allow authenticated write access" ON site_content FOR ALL USING (true);
+CREATE POLICY "Allow public write access" ON site_content FOR ALL USING (true);
 
+-- Permitir lectura pública para verificar si existe un admin
 CREATE POLICY "Allow public read access" ON admin_users FOR SELECT USING (true);
-CREATE POLICY "Allow authenticated write access" ON admin_users FOR ALL USING (true);
+-- Permitir que CUALQUIERA inserte (necesario para el primer setup)
+CREATE POLICY "Allow public insert access" ON admin_users FOR INSERT WITH CHECK (true);
+-- Permitir que CUALQUIERA actualice (necesario para el flujo de seguridad simplificado)
+CREATE POLICY "Allow public update access" ON admin_users FOR UPDATE USING (true);
+
