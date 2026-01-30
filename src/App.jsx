@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Instagram, Globe, MessageCircle, PlayCircle, History, ExternalLink, Settings, X, Plus, Trash2, Edit2, Check, Camera, Lock, User, ShieldCheck } from 'lucide-react';
+import { supabase } from './supabaseClient';
 import './App.css';
 
 const DEFAULT_LINKS = [
@@ -57,42 +58,14 @@ const VideoPlayer = ({ url, title }) => {
 };
 
 function App() {
-  const [links, setLinks] = useState(() => {
-    const saved = localStorage.getItem('440_links');
-    return saved ? JSON.parse(saved) : DEFAULT_LINKS;
-  });
-
-  const [videos, setVideos] = useState(() => {
-    const saved = localStorage.getItem('440_videos');
-    if (!saved) return DEFAULT_VIDEOS;
-    const parsed = JSON.parse(saved);
-    const migrated = {};
-    Object.keys(DEFAULT_VIDEOS).forEach(key => {
-      if (typeof parsed[key] === 'string') {
-        migrated[key] = { title: DEFAULT_VIDEOS[key].title, url: parsed[key] };
-      } else {
-        migrated[key] = parsed[key];
-      }
-    });
-    return migrated;
-  });
-
-  const [profile, setProfile] = useState(() => {
-    const saved = localStorage.getItem('440_profile');
-    if (!saved) return DEFAULT_PROFILE;
-    return { ...DEFAULT_PROFILE, ...JSON.parse(saved) };
-  });
-
-  const [footer, setFooter] = useState(() => {
-    const saved = localStorage.getItem('440_footer');
-    return saved ? JSON.parse(saved) : DEFAULT_FOOTER;
-  });
+  const [links, setLinks] = useState(DEFAULT_LINKS);
+  const [videos, setVideos] = useState(DEFAULT_VIDEOS);
+  const [profile, setProfile] = useState(DEFAULT_PROFILE);
+  const [footer, setFooter] = useState(DEFAULT_FOOTER);
+  const [loading, setLoading] = useState(true);
 
   // Security States
-  const [adminAuth, setAdminAuth] = useState(() => {
-    const saved = localStorage.getItem('440_admin_config');
-    return saved ? JSON.parse(saved) : null;
-  });
+  const [adminAuth, setAdminAuth] = useState(null);
   const [isAdmin, setIsAdmin] = useState(() => sessionStorage.getItem('440_auth') === 'true');
   const [showLogin, setShowLogin] = useState(false);
   const [showSetup, setShowSetup] = useState(false);
@@ -105,28 +78,76 @@ function App() {
   const [editingProfile, setEditingProfile] = useState(false);
   const [editingFooter, setEditingFooter] = useState(false);
   const [editingSecurity, setEditingSecurity] = useState(false);
+  const [tempProfileImage, setTempProfileImage] = useState(null);
 
+  // Load data from Supabase on mount
   useEffect(() => {
-    localStorage.setItem('440_links', JSON.stringify(links));
-  }, [links]);
+    loadContent();
+    checkAdminUser();
+  }, []);
 
-  useEffect(() => {
-    localStorage.setItem('440_videos', JSON.stringify(videos));
-  }, [videos]);
+  const loadContent = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('site_content')
+        .select('*');
 
-  useEffect(() => {
-    localStorage.setItem('440_profile', JSON.stringify(profile));
-  }, [profile]);
+      if (error) throw error;
 
-  useEffect(() => {
-    localStorage.setItem('440_footer', JSON.stringify(footer));
-  }, [footer]);
-
-  useEffect(() => {
-    if (adminAuth) {
-      localStorage.setItem('440_admin_config', JSON.stringify(adminAuth));
+      if (data) {
+        data.forEach(item => {
+          switch (item.key) {
+            case 'links':
+              setLinks(item.value);
+              break;
+            case 'videos':
+              setVideos(item.value);
+              break;
+            case 'profile':
+              setProfile(item.value);
+              break;
+            case 'footer':
+              setFooter(item.value);
+              break;
+          }
+        });
+      }
+    } catch (error) {
+      console.error('Error loading content:', error);
+    } finally {
+      setLoading(false);
     }
-  }, [adminAuth]);
+  };
+
+  const checkAdminUser = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('admin_users')
+        .select('*')
+        .limit(1)
+        .single();
+
+      if (data) {
+        setAdminAuth({ username: data.username, password: data.password_hash });
+      }
+    } catch (error) {
+      // No admin user exists yet
+      setAdminAuth(null);
+    }
+  };
+
+  const saveToSupabase = async (key, value) => {
+    try {
+      const { error } = await supabase
+        .from('site_content')
+        .upsert({ key, value }, { onConflict: 'key' });
+
+      if (error) throw error;
+    } catch (error) {
+      console.error(`Error saving ${key}:`, error);
+      alert('Error al guardar los cambios. Por favor intenta de nuevo.');
+    }
+  };
 
   const handleAdminToggle = () => {
     if (isAdmin) {
@@ -141,17 +162,27 @@ function App() {
     }
   };
 
-  const handleSetup = (e) => {
+  const handleSetup = async (e) => {
     e.preventDefault();
     const formData = new FormData(e.target);
-    const config = {
-      username: formData.get('username'),
-      password: formData.get('password')
-    };
-    setAdminAuth(config);
-    setIsAdmin(true);
-    setShowSetup(false);
-    sessionStorage.setItem('440_auth', 'true');
+    const username = formData.get('username');
+    const password = formData.get('password');
+
+    try {
+      const { error } = await supabase
+        .from('admin_users')
+        .insert([{ username, password_hash: password }]);
+
+      if (error) throw error;
+
+      setAdminAuth({ username, password });
+      setIsAdmin(true);
+      setShowSetup(false);
+      sessionStorage.setItem('440_auth', 'true');
+    } catch (error) {
+      console.error('Error creating admin:', error);
+      alert('Error al crear el administrador');
+    }
   };
 
   const handleLogin = (e) => {
@@ -167,18 +198,30 @@ function App() {
     }
   };
 
-  const updateSecurity = (e) => {
+  const updateSecurity = async (e) => {
     e.preventDefault();
     const formData = new FormData(e.target);
-    setAdminAuth({
-      username: formData.get('username'),
-      password: formData.get('password')
-    });
-    setEditingSecurity(false);
-    alert('Credenciales actualizadas correctamente');
+    const username = formData.get('username');
+    const password = formData.get('password');
+
+    try {
+      const { error } = await supabase
+        .from('admin_users')
+        .update({ username, password_hash: password })
+        .eq('username', adminAuth.username);
+
+      if (error) throw error;
+
+      setAdminAuth({ username, password });
+      setEditingSecurity(false);
+      alert('Credenciales actualizadas correctamente');
+    } catch (error) {
+      console.error('Error updating credentials:', error);
+      alert('Error al actualizar las credenciales');
+    }
   };
 
-  const addLink = (e) => {
+  const addLink = async (e) => {
     e.preventDefault();
     const formData = new FormData(e.target);
     const newLink = {
@@ -188,43 +231,46 @@ function App() {
       icon: formData.get('icon'),
       type: formData.get('type')
     };
-    setLinks([...links, newLink]);
+    const updatedLinks = [...links, newLink];
+    setLinks(updatedLinks);
+    await saveToSupabase('links', updatedLinks);
     setIsAdding(false);
   };
 
-  const updateLink = (e) => {
+  const updateLink = async (e) => {
     e.preventDefault();
     const formData = new FormData(e.target);
-    const updated = links.map(l => l.id === editingLink.id ? {
+    const updatedLinks = links.map(l => l.id === editingLink.id ? {
       ...l,
       title: formData.get('title'),
       url: formData.get('url'),
       icon: formData.get('icon'),
       type: formData.get('type')
     } : l);
-    setLinks(updated);
+    setLinks(updatedLinks);
+    await saveToSupabase('links', updatedLinks);
     setEditingLink(null);
   };
 
-  const deleteLink = (id) => {
+  const deleteLink = async (id) => {
     if (window.confirm('¿Eliminar este link?')) {
-      setLinks(links.filter(l => l.id !== id));
+      const updatedLinks = links.filter(l => l.id !== id);
+      setLinks(updatedLinks);
+      await saveToSupabase('links', updatedLinks);
     }
   };
 
-  const updateVideo = (e) => {
+  const updateVideo = async (e) => {
     e.preventDefault();
     const formData = new FormData(e.target);
-    const newTitle = formData.get('title');
-    const newUrl = formData.get('url');
-    setVideos(prev => ({
-      ...prev,
-      [editingVideo]: { title: newTitle, url: newUrl }
-    }));
+    const updatedVideos = {
+      ...videos,
+      [editingVideo]: { title: formData.get('title'), url: formData.get('url') }
+    };
+    setVideos(updatedVideos);
+    await saveToSupabase('videos', updatedVideos);
     setEditingVideo(null);
   };
-
-  const [tempProfileImage, setTempProfileImage] = useState(null);
 
   const handleImageChange = (e) => {
     const file = e.target.files[0];
@@ -237,27 +283,37 @@ function App() {
     }
   };
 
-  const updateProfile = (e) => {
+  const updateProfile = async (e) => {
     e.preventDefault();
     const formData = new FormData(e.target);
-    setProfile({
+    const updatedProfile = {
       name: formData.get('name'),
       title: formData.get('title'),
       hashtag: formData.get('hashtag'),
       image: tempProfileImage || profile.image
-    });
+    };
+    setProfile(updatedProfile);
+    await saveToSupabase('profile', updatedProfile);
     setEditingProfile(false);
     setTempProfileImage(null);
   };
 
-  const updateFooter = (e) => {
+  const updateFooter = async (e) => {
     e.preventDefault();
     const formData = new FormData(e.target);
-    setFooter({
-      text: formData.get('text')
-    });
+    const updatedFooter = { text: formData.get('text') };
+    setFooter(updatedFooter);
+    await saveToSupabase('footer', updatedFooter);
     setEditingFooter(false);
   };
+
+  if (loading) {
+    return (
+      <div className="container" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh' }}>
+        <p style={{ color: 'white', fontSize: '18px' }}>Cargando...</p>
+      </div>
+    );
+  }
 
   return (
     <div className="container">
@@ -409,14 +465,14 @@ function App() {
                   <label>Nuevo Usuario</label>
                   <div className="password-input-wrapper">
                     <User size={16} className="field-icon" />
-                    <input name="username" defaultValue={adminAuth.username} required />
+                    <input name="username" defaultValue={adminAuth?.username} required />
                   </div>
                 </div>
                 <div className="form-group">
                   <label>Nueva Contraseña</label>
                   <div className="password-input-wrapper">
                     <Lock size={16} className="field-icon" />
-                    <input type="password" name="password" defaultValue={adminAuth.password} required />
+                    <input type="password" name="password" defaultValue={adminAuth?.password} required />
                   </div>
                 </div>
                 <button type="submit" className="submit-btn"><Check size={20} /> Guardar Cambios</button>
