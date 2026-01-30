@@ -63,6 +63,7 @@ function App() {
   const [profile, setProfile] = useState(DEFAULT_PROFILE);
   const [footer, setFooter] = useState(DEFAULT_FOOTER);
   const [loading, setLoading] = useState(true);
+  const [errorConnection, setErrorConnection] = useState(false);
 
   // Security States
   const [adminAuth, setAdminAuth] = useState(null);
@@ -88,13 +89,17 @@ function App() {
 
   const loadContent = async () => {
     try {
+      setErrorConnection(false);
       const { data, error } = await supabase
         .from('site_content')
         .select('*');
 
-      if (error) throw error;
+      if (error) {
+        console.error('Supabase query error:', error);
+        throw error;
+      }
 
-      if (data) {
+      if (data && data.length > 0) {
         data.forEach(item => {
           switch (item.key) {
             case 'links':
@@ -111,9 +116,12 @@ function App() {
               break;
           }
         });
+      } else {
+        console.warn('No content found in Supabase site_content table, using defaults.');
       }
     } catch (error) {
-      console.error('Error loading content:', error);
+      console.error('Error loading content from Supabase:', error);
+      setErrorConnection(true);
     } finally {
       setLoading(false);
     }
@@ -121,17 +129,26 @@ function App() {
 
   const checkAdminUser = async () => {
     try {
+      // Usamos limit(1) en lugar de .single() para evitar el error 406
+      // si la tabla está vacía.
       const { data, error } = await supabase
         .from('admin_users')
         .select('*')
-        .limit(1)
-        .single();
+        .limit(1);
 
-      if (data) {
-        setAdminAuth({ username: data.username, password: data.password_hash });
+      if (error) {
+        console.error('Error checking admin user:', error);
+        return;
+      }
+
+      if (data && data.length > 0) {
+        setAdminAuth({ username: data[0].username, password: data[0].password_hash });
+      } else {
+        console.info('No admin user found. Setup mode enabled.');
+        setAdminAuth(null);
       }
     } catch (error) {
-      // No admin user exists yet
+      console.error('Unexpected error checking admin user:', error);
       setAdminAuth(null);
     }
   };
@@ -145,7 +162,7 @@ function App() {
       if (error) throw error;
     } catch (error) {
       console.error(`Error saving ${key}:`, error);
-      alert('Error al guardar los cambios. Por favor intenta de nuevo.');
+      alert('Error de conexión con la base de datos. Los cambios se aplicaron localmente pero podrían no persistir.');
     }
   };
 
